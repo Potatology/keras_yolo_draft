@@ -29,8 +29,8 @@ class_mapping = {
 # Path to images and annotations (Your custom paths)
 path_images = PATH_IMAGES
 path_annot = PATH_ANNOTATIONS
-SCORE_THRESHOLD = 0.6
-LEARNING_RATE = 0.0005
+SCORE_THRESHOLD = 0.5
+LEARNING_RATE = 0.0001
 
 class CheckDataset(torch.utils.data.Dataset):
     def __init__(self, root_images, root_annot, transforms=None):
@@ -90,7 +90,7 @@ def freeze_model_layers(model, freeze_backbone=True, freeze_fpn=False, freeze_rp
 
 # Models
 FASTERRCNN_RESNET50_FPN = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=True)
-FASTERRCNN_MOBILENET_V3_LARGE_FPN = fasterrcnn_mobilenet_v3_large_fpn(pretrained=True)
+FASTERRCNN_MOBILENET_V3_LARGE_FPN = torchvision.models.detection.fasterrcnn_mobilenet_v3_large_fpn(pretrained=True)
 
 # Load the model
 model = FASTERRCNN_RESNET50_FPN
@@ -113,8 +113,7 @@ optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE) # Reduced lea
 num_epochs = 8
 
 
-
-with mlflow.start_run():
+"""with mlflow.start_run():
     mlflow.log_param("learning_rate", LEARNING_RATE)
     mlflow.log_param("num_epochs", num_epochs)
     mlflow.log_param("batch_size", 1)
@@ -132,8 +131,7 @@ with mlflow.start_run():
         print(f"Epoch {epoch+1}/{num_epochs}, Total Loss: {losses.item():.4f}, {loss_str}")
         mlflow.log_metric("total_loss", losses.item(), step=epoch)
     mlflow.pytorch.log_model(model, "model")
-
-
+"""
 
 torch.save(model.state_dict(), 'trained_model.pth')
 print("Model saved as trained_model.pth")
@@ -211,6 +209,8 @@ class CheckPredictor:
         boxes = prediction['boxes'].cpu().numpy().tolist()
         labels = prediction['labels'].cpu().numpy().tolist()
         scores = prediction['scores'].cpu().numpy().tolist()
+        print("Labels:", [self.class_mapping[l] for l in labels])
+        print("Scores:", scores)
 
         print("Image Predictions:")
         for box, label, score in zip(boxes, labels, scores):
@@ -229,6 +229,9 @@ class CheckPredictor:
                 
         for box, label, score in zip(boxes, labels, scores):
             if score > SCORE_THRESHOLD and self.class_mapping[label] == "amt":
+                print("All predictions:")
+                for box, label, score in zip(boxes, labels, scores):
+                    print(f"{self.class_mapping[label]}: {score:.2f}")
                 cropped = self.crop_bbox(image, box)
                 cropped.save("cropped_amt.png")
                 break
@@ -239,6 +242,6 @@ class CheckPredictor:
 
 
 
-#predictor = CheckPredictor('trained_model.pth', class_mapping, device='cuda' if torch.cuda.is_available() else 'cpu')
-#predictor.predict(os.path.join(script_dir,'../Data_labeling_project/manual_test_dataset/test_check_2.png'))
-predict_on_training_data(visualize=True)
+predictor = CheckPredictor('trained_model.pth', class_mapping, device='cuda' if torch.cuda.is_available() else 'cpu')
+predictor.predict(os.path.join(script_dir,'../Data_labeling_project/manual_test_dataset/test_check_2.png'))
+#predict_on_training_data(visualize=True)
