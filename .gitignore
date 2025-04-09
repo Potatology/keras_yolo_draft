@@ -1,1 +1,10 @@
 trained_model.pth
+/Data_labeling_project/
+/mlflow.db
+/mlruns/
+/ocr_amount/
+/.DS_Store
+/Data_labeling_project/
+/cropped_amt.png
+/experiments/
+/internet_datasets/

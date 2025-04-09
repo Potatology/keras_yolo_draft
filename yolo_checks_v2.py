@@ -2,13 +2,19 @@ import os
 import torch
 import torchvision
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
+from torchvision.models.detection import fasterrcnn_mobilenet_v3_large_fpn
+
 from torchvision.transforms import functional as F
 from PIL import Image
 import xml.etree.ElementTree as ET
 import cv2
 import numpy as np
-import torchvision.transforms.functional as TF
+import mlflow
+import mlflow.pytorch
 
+
+mlflow.set_tracking_uri("http://127.0.0.1:5000")
+mlflow.set_experiment("check_detection")
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 PATH_IMAGES = os.path.join(script_dir, "../Data_labeling_project/labeled_dataset/poc_dataset_v2/images")
@@ -24,6 +30,7 @@ class_mapping = {
 path_images = PATH_IMAGES
 path_annot = PATH_ANNOTATIONS
 SCORE_THRESHOLD = 0.6
+LEARNING_RATE = 0.0005
 
 class CheckDataset(torch.utils.data.Dataset):
     def __init__(self, root_images, root_annot, transforms=None):
@@ -81,8 +88,12 @@ def freeze_model_layers(model, freeze_backbone=True, freeze_fpn=False, freeze_rp
         for param in model.roi_heads.parameters():
             param.requires_grad = False
 
+# Models
+FASTERRCNN_RESNET50_FPN = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=True)
+FASTERRCNN_MOBILENET_V3_LARGE_FPN = fasterrcnn_mobilenet_v3_large_fpn(pretrained=True)
+
 # Load the model
-model = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=True)
+model = FASTERRCNN_RESNET50_FPN
 
 # Example: freeze backbone, train rest
 freeze_model_layers(model, freeze_backbone=True, freeze_fpn=False, freeze_rpn=False, freeze_roi_head=False)
@@ -98,30 +109,39 @@ data_loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, 
 # Training loop (fixed)
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 model.to(device)
-optimizer = torch.optim.Adam(model.parameters(), lr=0.0001) # Reduced learning rate
+optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE) # Reduced learning rate
 num_epochs = 8
 
-for epoch in range(num_epochs):
-    model.train()
-    for images, targets in data_loader:
-        images = list(image.to(device) for image in images)
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
-        loss_dict = model(images, targets)
-        losses = sum(loss for loss in loss_dict.values())
-        optimizer.zero_grad()
-        losses.backward()
-        optimizer.step()
-    loss_str = ', '.join(f"{k}: {v.item():.4f}" for k, v in loss_dict.items())
-    print(f"Epoch {epoch+1}/{num_epochs}, Total Loss: {losses.item():.4f}, {loss_str}")
+
+
+with mlflow.start_run():
+    mlflow.log_param("learning_rate", LEARNING_RATE)
+    mlflow.log_param("num_epochs", num_epochs)
+    mlflow.log_param("batch_size", 1)
+    for epoch in range(num_epochs):
+        model.train()
+        for images, targets in data_loader:
+            images = list(image.to(device) for image in images)
+            targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+            loss_dict = model(images, targets)
+            losses = sum(loss for loss in loss_dict.values())
+            optimizer.zero_grad()
+            losses.backward()
+            optimizer.step()
+        loss_str = ', '.join(f"{k}: {v.item():.4f}" for k, v in loss_dict.items())
+        print(f"Epoch {epoch+1}/{num_epochs}, Total Loss: {losses.item():.4f}, {loss_str}")
+        mlflow.log_metric("total_loss", losses.item(), step=epoch)
+    mlflow.pytorch.log_model(model, "model")
 
 
 
 torch.save(model.state_dict(), 'trained_model.pth')
 print("Model saved as trained_model.pth")
+mlflow.end_run()
 
 
 # Prediction loop (fixed)
-def predict_on_training_data():
+def predict_on_training_data(visualize=False):
     model.eval()
     for images, targets in data_loader:
         images_cpu = [image.cpu() for image in images]
@@ -141,6 +161,9 @@ def predict_on_training_data():
             if score > SCORE_THRESHOLD:
                 print(f"  Label: {class_mapping[label]}, Box: {box}, Score: {score}")
 
+        if not visualize:
+            continue
+        
         # Visualization part
         image_pil = images_pil[0] # get the PIL Image
         image_cv = np.array(image_pil)
@@ -216,6 +239,6 @@ class CheckPredictor:
 
 
 
-predictor = CheckPredictor('trained_model.pth', class_mapping, device='cuda' if torch.cuda.is_available() else 'cpu')
-predictor.predict(os.path.join(script_dir,'../Data_labeling_project/manual_test_dataset/test_check_2.png'))
-#predict_on_training_data()
+#predictor = CheckPredictor('trained_model.pth', class_mapping, device='cuda' if torch.cuda.is_available() else 'cpu')
+#predictor.predict(os.path.join(script_dir,'../Data_labeling_project/manual_test_dataset/test_check_2.png'))
+predict_on_training_data(visualize=True)
